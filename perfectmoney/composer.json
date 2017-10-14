@@ -1,6 +1,6 @@
 {
     "name": "blesta/perfectmoney",
-    "description": "Perfect Monet",
+    "description": "Perfect Money",
     "license": "proprietary",
     "type": "blesta-gateway-nonmerchant",
     "require": {
