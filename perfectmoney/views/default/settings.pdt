@@ -10,6 +10,6 @@
                 $this->Form->label($this->_('Perfectmoney.passphrase', true), 'passphrase');
                 $this->Form->fieldText('passphrase', $this->Html->ifSet($meta['passphrase']), ['id'=>'passphrase']);
             ?>
-            <span class="tooltip"><?php $this->_('AppController.tooltip.text');?><div><?php $this->_('Perfectmoney.passphrase_note');?></div></span>
+            <span class="tooltip"><?php $this->_('AppController.tooltip.text'); ?><div><?php $this->_('Perfectmoney.passphrase_note'); ?></div></span>
         </li>
 	</ul>
