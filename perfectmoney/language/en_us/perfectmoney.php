@@ -1,4 +1,5 @@
 <?php
+
 $lang['Perfectmoney.name'] = 'Perfect Money';
 
 $lang['Perfectmoney.payee_account'] = 'Payee Account';

@@ -14,4 +14,3 @@
     $this->Form->fieldButton('PAYMENT_METHOD', $this->_('Perfectmoney.buildprocess.submit', true), ['type' => 'submit', 'class' => 'btn btn-danger', 'value' => 'Pay Now!']);
 
     $this->Form->end();
-?>
