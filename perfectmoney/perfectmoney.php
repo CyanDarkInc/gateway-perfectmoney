@@ -9,7 +9,7 @@
  *
  * @package blesta
  * @subpackage blesta.components.gateways.perfectmoney
- * @copyright Copyright (c) 2010, Phillips Data, Inc.
+ * @copyright Copyright (c) 2017, Phillips Data, Inc.
  * @license http://www.blesta.com/license/ The Blesta License Agreement
  * @link http://www.blesta.com/ Blesta
  */
@@ -18,12 +18,12 @@ class Perfectmoney extends NonmerchantGateway
     /**
      * @var string The version of this gateway
      */
-    private static $version = '1.0.0';
+    private static $version = '1.0.1';
 
     /**
      * @var string The authors of this gateway
      */
-    private static $authors = [['name'=>'Phillips Data, Inc.','url'=>'http://www.blesta.com']];
+    private static $authors = [['name' => 'Phillips Data, Inc.', 'url' => 'http://www.blesta.com']];
 
     /**
      * @var array An array of meta data for this gateway
@@ -36,7 +36,7 @@ class Perfectmoney extends NonmerchantGateway
     private $perfectmoney_url = 'https://perfectmoney.is/api/step1.asp';
 
     /**
-     * Construct a new merchant gateway.
+     * Construct a new non-merchant gateway.
      */
     public function __construct()
     {
@@ -229,23 +229,30 @@ class Perfectmoney extends NonmerchantGateway
 
         // An array of key/value hidden fields to set for the payment form
         $fields = [
+            'PAYMENT_ID' => uniqid(),
             'PAYEE_ACCOUNT' => $this->ifSet($this->meta['payee_account']),
             'PAYEE_NAME' => $this->ifSet($company->name),
             'PAYMENT_AMOUNT' => $amount,
             'PAYMENT_UNITS' => $this->currency,
-            'STATUS_URL' => Configure::get('Blesta.gw_callback_url') . Configure::get('Blesta.company_id') . '/perfectmoney/?client_id=' . $this->ifSet($contact_info['client_id']),
+            'STATUS_URL' => Configure::get('Blesta.gw_callback_url')
+                . Configure::get('Blesta.company_id')
+                . '/perfectmoney/?client_id='
+                . $this->ifSet($contact_info['client_id']),
             'PAYMENT_URL' => $this->ifSet($options['return_url']),
             'PAYMENT_URL_METHOD' => 'POST',
             'NOPAYMENT_URL' => $this->ifSet($options['return_url']),
             'NOPAYMENT_URL_METHOD' => 'POST',
-            'BAGGAGE_FIELDS' => 'custom',
+            'BAGGAGE_FIELDS' => 'INVOICES',
             'PAYMENT_METHOD' => 'Pay Now!'
         ];
 
         // Set all invoices to pay
         if (isset($invoice_amounts) && is_array($invoice_amounts)) {
-            $fields['custom'] = $this->serializeInvoices($invoice_amounts);
+            $fields['INVOICES'] = $this->serializeInvoices($invoice_amounts);
         }
+
+        // Log input
+        $this->log($this->ifSet($_SERVER['REQUEST_URI']), serialize($fields), 'input', true);
 
         return $this->buildForm($post_to, $fields);
     }
@@ -298,17 +305,19 @@ class Perfectmoney extends NonmerchantGateway
             . $this->ifSet($post['PAYMENT_UNITS']) . ':'
             . $this->ifSet($post['PAYMENT_BATCH_NUM']) . ':'
             . $this->ifSet($post['PAYER_ACCOUNT']) . ':'
-            . $this->ifSet($this->meta['passphrase']) . ':'
+            . strtoupper(md5($this->meta['passphrase'])) . ':'
             . $this->ifSet($post['TIMESTAMPGMT']);
 
-        $v2_hash = md5($signature);
+        $v2_hash = strtoupper(md5($signature));
 
         // Ensure payment is verified, and validate that the business is valid
         // and matches that configured for this gateway, to prevent payments
         // being recognized that were delivered to a different account
         $account_id = strtolower($this->ifSet($this->meta['payee_account']));
 
-        if (strtolower($this->ifSet($post['PAYEE_ACCOUNT'])) != $account_id || strtolower($this->ifSet($post['V2_HASH'])) != $v2_hash) {
+        if (strtolower($this->ifSet($post['PAYEE_ACCOUNT'])) != $account_id
+            || $this->ifSet($post['V2_HASH']) != $v2_hash
+        ) {
             $this->Input->setErrors($this->getCommonError('invalid'));
 
             // Log error response
@@ -318,20 +327,23 @@ class Perfectmoney extends NonmerchantGateway
         }
 
         // Capture the IPN status, or reject it if invalid
-        $status = 'error';
-        if ($v2_hash == strtolower($this->ifSet($post['V2_HASH']))) {
+        $status = 'declined';
+        if ($v2_hash == $this->ifSet($post['V2_HASH'])) {
             $status = 'approved';
+
+            // Log response
+            $this->log($this->ifSet($_SERVER['REQUEST_URI']), serialize($post), 'output', true);
         }
+
+        $client_id = $this->ifSet($get['client_id']);
 
         return [
             'client_id' => $client_id,
             'amount' => $this->ifSet($post['PAYMENT_AMOUNT']),
             'currency' => $this->ifSet($post['PAYMENT_UNITS']),
             'status' => $status,
-            'reference_id' => null,
             'transaction_id' => $this->ifSet($post['PAYMENT_BATCH_NUM']),
-            'parent_transaction_id' => $this->ifSet($post['PAYMENT_ID']),
-            'invoices' => $this->unserializeInvoices($this->ifSet($post['custom']))
+            'invoices' => $this->unserializeInvoices($this->ifSet($post['INVOICES']))
         ];
     }
 
@@ -360,66 +372,10 @@ class Perfectmoney extends NonmerchantGateway
             'client_id' => $client_id,
             'amount' => $this->ifSet($post['PAYMENT_AMOUNT']),
             'currency' => $this->ifSet($post['PAYMENT_UNITS']),
-            'invoices' => $this->unserializeInvoices($this->ifSet($post['custom'])),
+            'invoices' => $this->unserializeInvoices($this->ifSet($post['INVOICES'])),
             'status' => 'approved', // we wouldn't be here if it weren't, right?
             'transaction_id' => $this->ifSet($post['PAYMENT_BATCH_NUM'])
         ];
-    }
-
-    /**
-     * Captures a previously authorized payment.
-     *
-     * @param string $reference_id The reference ID for the previously authorized transaction
-     * @param string $transaction_id The transaction ID for the previously authorized transaction.
-     * @param $amount The amount.
-     * @param array $invoice_amounts
-     * @return array An array of transaction data including:
-     *  - status The status of the transaction (approved, declined, void, pending, reconciled, refunded, returned)
-     *  - reference_id The reference ID for gateway-only use with this transaction (optional)
-     *  - transaction_id The ID returned by the remote gateway to identify this transaction
-     *  - message The message to be displayed in the interface in addition to the standard
-     *      message for this transaction status (optional)
-     */
-    public function capture($reference_id, $transaction_id, $amount, array $invoice_amounts = null)
-    {
-        $this->Input->setErrors($this->getCommonError('unsupported'));
-    }
-
-    /**
-     * Void a payment or authorization.
-     *
-     * @param string $reference_id The reference ID for the previously submitted transaction
-     * @param string $transaction_id The transaction ID for the previously submitted transaction
-     * @param string $notes Notes about the void that may be sent to the client by the gateway
-     * @return array An array of transaction data including:
-     *  - status The status of the transaction (approved, declined, void, pending, reconciled, refunded, returned)
-     *  - reference_id The reference ID for gateway-only use with this transaction (optional)
-     *  - transaction_id The ID returned by the remote gateway to identify this transaction
-     *  - message The message to be displayed in the interface in addition to the standard
-     *      message for this transaction status (optional)
-     */
-    public function void($reference_id, $transaction_id, $notes = null)
-    {
-        $this->Input->setErrors($this->getCommonError('unsupported'));
-    }
-
-    /**
-     * Refund a payment.
-     *
-     * @param string $reference_id The reference ID for the previously submitted transaction
-     * @param string $transaction_id The transaction ID for the previously submitted transaction
-     * @param float $amount The amount to refund this card
-     * @param string $notes Notes about the refund that may be sent to the client by the gateway
-     * @return array An array of transaction data including:
-     *  - status The status of the transaction (approved, declined, void, pending, reconciled, refunded, returned)
-     *  - reference_id The reference ID for gateway-only use with this transaction (optional)
-     *  - transaction_id The ID returned by the remote gateway to identify this transaction
-     *  - message The message to be displayed in the interface in addition to the standard
-     *      message for this transaction status (optional)
-     */
-    public function refund($reference_id, $transaction_id, $amount, $notes = null)
-    {
-        $this->Input->setErrors($this->getCommonError('unsupported'));
     }
 
     /**
